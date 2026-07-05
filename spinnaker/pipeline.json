@@ -1,0 +1,55 @@
+{
+  "name": "demo-app-build-and-deploy",
+  "application": "spinnaker-flow",
+  "keepWaitingPipelines": false,
+  "limitConcurrent": true,
+  "expectedArtifacts": [
+    {
+      "id": "demo-app-manifest",
+      "displayName": "demo-app-manifest",
+      "matchArtifact": {
+        "type": "http/file",
+        "name": "manifest.yaml"
+      },
+      "usePriorArtifact": false,
+      "useDefaultArtifact": true,
+      "defaultArtifact": {
+        "type": "http/file",
+        "name": "manifest.yaml",
+        "reference": "https://raw.githubusercontent.com/invisiblelad/spinnaker-workflow/main/k8s/manifest.yaml"
+      }
+    }
+  ],
+  "stages": [
+    {
+      "name": "Deploy to Kubernetes",
+      "refId": "1",
+      "type": "deployManifest",
+      "account": "managing",
+      "cloudProvider": "kubernetes",
+      "namespaceOverride": "demo",
+      "source": "artifact",
+      "manifestArtifactId": "demo-app-manifest",
+      "manifestArtifactAccount": "no-auth-http-account",
+      "skipExpressionEvaluation": false,
+      "moniker": {
+        "app": "demoapp"
+      },
+      "trafficManagement": {
+        "enabled": false,
+        "options": {
+          "enableTraffic": true
+        }
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "enabled": true,
+      "type": "jenkins",
+      "master": "my-jenkins",
+      "job": "demo-app-build",
+      "propertyFile": "image-info.properties"
+    }
+  ]
+}

@@ -1,41 +1,379 @@
-# End-to-end: GitHub → Jenkins → Docker → Spinnaker → Kubernetes (GitOps manifests)
+# End-to-End CI/CD Pipeline
 
-## What's in this folder
+## GitHub → Jenkins → Docker Registry → Spinnaker → Kubernetes
+
+![CI/CD Workflow](./cicd_workflow_overview.png)
+
+A production-style CI/CD pipeline that automatically builds, tests, packages, and deploys applications to Kubernetes using **Jenkins**, **Docker**, and **Spinnaker** while following a **GitOps** approach for Kubernetes manifests.
+
+---
+
+# 📖 Overview
+
+This project demonstrates a complete Continuous Integration and Continuous Deployment (CI/CD) workflow.
+
+Whenever code is pushed to GitHub:
+
+1. Jenkins is triggered via a GitHub webhook.
+2. Jenkins builds and tests the application.
+3. A Docker image is created and pushed to a Docker registry.
+4. Jenkins publishes the image details as a build artifact.
+5. Spinnaker detects the successful Jenkins build.
+6. Spinnaker downloads the Kubernetes manifest directly from GitHub.
+7. The image tag inside the manifest is replaced dynamically.
+8. The updated manifest is deployed to Kubernetes.
+
+This architecture keeps deployment manifests inside Git while allowing Spinnaker to deploy the latest application image automatically.
+
+---
+
+# 🏗️ Architecture
 
 ```
-app/                    Sample Flask app + Dockerfile
-Jenkinsfile             Builds, pushes the image, writes a properties file
-k8s/manifest.yaml       The live manifest Spinnaker deploys from (fetched from GitHub)
-spinnaker/pipeline.json Full Spinnaker pipeline definition (trigger + artifact-sourced deploy stage)
+                 +--------------------+
+                 |      GitHub        |
+                 | Code Push / Merge  |
+                 +---------+----------+
+                           |
+                           |
+                           ▼
+                 +--------------------+
+                 |      Jenkins       |
+                 | Build • Test       |
+                 | Build Docker Image |
+                 | Push Image         |
+                 +---------+----------+
+                           |
+                           |
+                           ▼
+                 +--------------------+
+                 | Docker Registry    |
+                 | Tagged Images      |
+                 +--------------------+
+
+                           |
+                           |
+                 Jenkins Notification
+                           |
+                           ▼
+
+               +----------------------+
+               |        Igor          |
+               +----------+-----------+
+                          |
+                          ▼
+               +----------------------+
+               |        Echo          |
+               +----------+-----------+
+                          |
+                          ▼
+               +----------------------+
+               |   Orca Pipeline      |
+               | Deploy Manifest      |
+               +----------+-----------+
+                          |
+                          ▼
+               +----------------------+
+               | Kubernetes Cluster   |
+               +----------------------+
 ```
 
-## How the pieces connect
+---
 
-1. You push code (and any changes to `k8s/manifest.yaml`) to GitHub.
-2. A webhook triggers the Jenkins job.
-3. Jenkins builds the Docker image, pushes it, and writes `image-info.properties`
-   with the exact image/tag it just built, then archives it as a build artifact.
-4. Spinnaker's Jenkins trigger reads that properties file and exposes it as
-   `${trigger['properties']['KEY']}` inside the pipeline.
-5. The Deploy Manifest stage fetches `k8s/manifest.yaml` **directly from your
-   GitHub repo** (via its raw URL) instead of using an inline copy — this is
-   the GitOps pattern. Any manifest change is just a Git commit; no need to
-   touch the pipeline config itself.
-6. Spinnaker evaluates the `${trigger['properties']['FULL_IMAGE']}` expression
-   inside the fetched YAML at deploy time, substituting in the image Jenkins
-   just pushed.
+# 📂 Repository Structure
 
-## One-time setup: enable the HTTP artifact account in Clouddriver
+```text
+.
+├── app/
+│   ├── app.py
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── Jenkinsfile
+│
+├── k8s/
+│   └── manifest.yaml
+│
+├── spinnaker/
+│   └── pipeline.json
+│
+├── cicd_workflow_overview.png
+│
+└── README.md
+```
 
-Spinnaker needs an artifact account capable of fetching plain HTTP(S) URLs
-(raw.githubusercontent.com counts as this, since it's a public, unauthenticated
-URL). Check if it's already enabled:
+---
+
+# 🚀 CI/CD Workflow
+
+## Step 1 - Developer Pushes Code
+
+Developers push code or merge a Pull Request into GitHub.
+
+```
+Developer
+      │
+      ▼
+ GitHub Repository
+```
+
+---
+
+## Step 2 - Jenkins Pipeline
+
+A GitHub webhook automatically triggers Jenkins.
+
+The Jenkins pipeline performs the following actions:
+
+- Checkout source code
+- Install dependencies
+- Run unit tests
+- Build Docker image
+- Tag Docker image
+- Push Docker image
+- Generate build metadata
+
+Example generated artifact:
+
+```properties
+IMAGE_NAME=demo-app
+IMAGE_TAG=15
+FULL_IMAGE=docker.io/demo/demo-app:15
+```
+
+This file is archived as a Jenkins build artifact.
+
+---
+
+## Step 3 - Docker Registry
+
+The Docker image is pushed to your registry.
+
+Example:
+
+```
+docker.io/demo/demo-app:15
+```
+
+This image becomes the deployment artifact.
+
+---
+
+## Step 4 - Spinnaker Trigger
+
+Spinnaker continuously monitors Jenkins.
+
+When Jenkins finishes successfully:
+
+- Igor detects the completed build
+- Echo matches the pipeline trigger
+- Orca starts the deployment pipeline
+
+```
+Jenkins
+   │
+   ▼
+ Igor
+   │
+   ▼
+ Echo
+   │
+   ▼
+ Orca Pipeline
+```
+
+---
+
+## Step 5 - Fetch Kubernetes Manifest
+
+Instead of embedding Kubernetes YAML inside Spinnaker, the Deploy Manifest stage downloads the manifest directly from GitHub.
+
+Example:
+
+```
+https://raw.githubusercontent.com/<org>/<repo>/main/k8s/manifest.yaml
+```
+
+Advantages:
+
+- Version controlled
+- Pull Request reviews
+- Git history
+- Easier maintenance
+
+---
+
+## Step 6 - Dynamic Image Replacement
+
+The Kubernetes manifest contains:
+
+```yaml
+image: ${trigger['properties']['FULL_IMAGE']}
+```
+
+At deployment time Spinnaker replaces it with:
+
+```yaml
+image: docker.io/demo/demo-app:15
+```
+
+No manual editing is required.
+
+---
+
+## Step 7 - Deploy to Kubernetes
+
+Spinnaker applies the manifest.
+
+Kubernetes performs a rolling update.
+
+Verify deployment:
 
 ```bash
-kubectl get cm clouddriver-4gh29tfd77 -n spinnaker -o yaml | grep -A10 artifacts
+kubectl get pods -n demo
+
+kubectl get deployment demo-app -n demo \
+-o jsonpath='{.spec.template.spec.containers[0].image}'
 ```
 
-If nothing shows up, add it. Patch Clouddriver's ConfigMap to include:
+---
+
+# ⚙️ Prerequisites
+
+Install the following:
+
+- Git
+- Docker
+- Kubernetes Cluster
+- kubectl
+- Jenkins
+- Spinnaker
+- GitHub Repository
+- Docker Registry
+
+---
+
+# 🔧 Installation
+
+## 1. Clone Repository
+
+```bash
+git clone https://github.com/<username>/<repo>.git
+
+cd <repo>
+```
+
+---
+
+## 2. Create Namespace
+
+```bash
+kubectl create namespace demo
+```
+
+---
+
+## 3. Configure Jenkins
+
+Create a new Pipeline Job.
+
+Pipeline Type
+
+```
+Pipeline Script from SCM
+```
+
+Configure
+
+- Git Repository
+- Credentials
+- Branch
+- Jenkinsfile
+
+Enable
+
+```
+GitHub hook trigger for GITScm polling
+```
+
+---
+
+## 4. Docker Registry Credentials
+
+Navigate to
+
+```
+Manage Jenkins
+    ↓
+Credentials
+    ↓
+System
+    ↓
+Global Credentials
+```
+
+Create
+
+```
+Username with Password
+```
+
+Credential ID
+
+```
+docker-registry-creds
+```
+
+Update the following inside the Jenkinsfile:
+
+```groovy
+REGISTRY
+IMAGE_NAME
+```
+
+---
+
+## 5. Configure GitHub Webhook
+
+Repository
+
+```
+Settings
+    ↓
+Webhooks
+    ↓
+Add Webhook
+```
+
+Payload URL
+
+```
+http://<jenkins-url>/github-webhook/
+```
+
+Content Type
+
+```
+application/json
+```
+
+Events
+
+```
+Push
+```
+
+---
+
+## 6. Enable HTTP Artifact Account
+
+Check whether the HTTP artifact account already exists.
+
+```bash
+kubectl get cm clouddriver-<config> -n spinnaker -o yaml
+```
+
+If missing, add:
 
 ```yaml
 artifacts:
@@ -45,117 +383,234 @@ artifacts:
       - name: no-auth-http-account
 ```
 
-Example patch command (merge this into whatever Clouddriver's existing
-`clouddriver.yml` content is — check the current ConfigMap first so you don't
-overwrite the Kubernetes account config already in there):
-
-```bash
-kubectl get cm clouddriver-4gh29tfd77 -n spinnaker -o yaml
-```
-
-Add the `artifacts:` block above alongside the existing `kubernetes:` block,
-then:
+Restart Clouddriver.
 
 ```bash
 kubectl rollout restart deployment clouddriver -n spinnaker
 ```
 
 Verify:
-```bash
-curl -sk -b cookies.txt "https://<url>/api/v1/artifacts/credentials" | jq
-```
-Should list `no-auth-http-account` with type `http`.
-
-## Setup steps
-
-### 1. Push this code to a GitHub repo
-
-Keep this exact layout — `Jenkinsfile` at the repo root, `app/` and `k8s/` as
-subdirectories (the pipeline's artifact reference assumes this path).
-
-### 2. Update the raw URL in the pipeline
-
-In `spinnaker/pipeline.json`, replace:
-```
-https://raw.githubusercontent.com/YOUR_GITHUB_ORG/YOUR_REPO/main/k8s/manifest.yaml
-```
-with your actual GitHub org/repo/branch.
-
-### 3. Configure the GitHub webhook
-
-Repo → Settings → Webhooks → Add webhook
-- Payload URL: `http://<url>/github-webhook/`
-- Content type: `application/json`
-- Event: Just the push event
-
-### 4. Create the Jenkins job
-
-- New Item → Pipeline
-- Pipeline → Definition: "Pipeline script from SCM"
-- SCM: Git, point at your repo + credentials
-- Script Path: `Jenkinsfile`
-- Build Triggers: check "GitHub hook trigger for GITScm polling"
-
-### 5. Add Docker registry credentials in Jenkins
-
-Manage Jenkins → Credentials → System → Global credentials → Add Credentials
-- Kind: Username with password
-- ID: `docker-registry-creds` (must match the Jenkinsfile)
-
-Edit the Jenkinsfile's `REGISTRY` and `IMAGE_NAME` to match your actual registry.
-
-### 6. Create the `demo` namespace
 
 ```bash
-kubectl create namespace demo
+curl -sk -b cookies.txt \
+https://<spinnaker>/api/v1/artifacts/credentials | jq
 ```
 
-### 7. Create the Spinnaker application
+Expected output should include:
 
-In Deck: Applications → Create Application → name it `demoapp`.
+```
+no-auth-http-account
+```
 
-### 8. Import the pipeline
+---
+
+## 7. Create Spinnaker Application
+
+Create a new application.
+
+```
+Name
+
+demoapp
+```
+
+---
+
+## 8. Import Pipeline
 
 ```bash
-curl -sk -b cookies.txt -X POST \
-  https://<url>/api/v1/pipelines \
-  -H "Content-Type: application/json" \
-  -d @spinnaker/pipeline.json
+curl -sk -b cookies.txt \
+-X POST \
+https://<spinnaker>/api/v1/pipelines \
+-H "Content-Type: application/json" \
+-d @spinnaker/pipeline.json
 ```
 
-### 9. Update the trigger's job name
+---
 
-Change `"job": "demo-app-build"` in the pipeline JSON to match your actual
-Jenkins job name from step 4, then re-import (POST again — Spinnaker will
-update the existing pipeline by name+application).
+## 9. Update Jenkins Job Name
 
-### 10. Test it
+Inside
 
-Push a commit → Jenkins builds and pushes an image → Spinnaker pipeline
-auto-triggers → Deploy Manifest stage fetches the manifest fresh from GitHub
-and applies it with the new image tag substituted in:
+```
+spinnaker/pipeline.json
+```
+
+Update
+
+```json
+"job": "demo-app-build"
+```
+
+to match your Jenkins Job.
+
+Re-import the pipeline.
+
+---
+
+# 🧪 Testing
+
+Push a commit.
+
+The pipeline executes automatically.
+
+```
+GitHub
+    │
+    ▼
+Jenkins
+    │
+    ▼
+Docker Registry
+    │
+    ▼
+Spinnaker Trigger
+    │
+    ▼
+Deploy Manifest
+    │
+    ▼
+Kubernetes
+```
+
+Verify
 
 ```bash
 kubectl get pods -n demo
-kubectl get deploy demo-app -n demo -o jsonpath='{.spec.template.spec.containers[0].image}'
+
+kubectl get svc -n demo
+
+kubectl get deployment demo-app -n demo
 ```
 
-## Why this is better than inline manifests
+---
 
-- **Manifest changes don't require touching the pipeline config** — just edit
-  `k8s/manifest.yaml` and commit. Spinnaker always fetches the latest version
-  from the branch/URL specified.
-- **Version history lives in Git**, not buried in Spinnaker's pipeline history.
-- **Code review works normally** — manifest changes go through the same PR
-  process as application code.
+# 🔍 Verification
 
-## Notes
+Verify the deployed image.
 
-- `useDefaultArtifact: true` with no `usePriorArtifact`/trigger-matching means
-  Spinnaker always fetches the *latest* version at the URL on every run. If you
-  want to pin to a specific commit instead of always-latest `main`, point the
-  URL at a specific commit SHA path instead of the branch name.
-- If your GitHub repo is private, `raw.githubusercontent.com` URLs won't be
-  publicly fetchable — you'd need a GitHub-specific artifact account with a
-  token instead of the plain `http` account. Let me know if your repo is
-  private and I'll adjust this.
+```bash
+kubectl get deployment demo-app \
+-n demo \
+-o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Example
+
+```
+docker.io/demo/demo-app:15
+```
+
+---
+
+# 📈 Why GitOps?
+
+This project follows GitOps principles.
+
+Benefits include:
+
+- Kubernetes manifests remain inside Git.
+- Every deployment configuration change is version controlled.
+- Pull Requests review infrastructure changes.
+- Rollbacks are simple using Git history.
+- No YAML duplication inside Spinnaker.
+- Pipelines remain generic and reusable.
+
+---
+
+# 🛠️ Troubleshooting
+
+## Jenkins builds successfully but Spinnaker does not trigger
+
+Check:
+
+- Jenkins trigger configuration
+- Igor logs
+- Echo logs
+
+---
+
+## Manifest download fails
+
+Verify:
+
+- Raw GitHub URL
+- HTTP Artifact Account
+- Clouddriver logs
+
+---
+
+## Image tag not updated
+
+Verify that Jenkins publishes:
+
+```properties
+FULL_IMAGE=
+```
+
+Verify the Kubernetes manifest contains:
+
+```yaml
+image: ${trigger['properties']['FULL_IMAGE']}
+```
+
+---
+
+## Kubernetes deployment fails
+
+Check
+
+```bash
+kubectl describe pods -n demo
+
+kubectl logs <pod-name> -n demo
+```
+
+---
+
+# 📚 Technologies Used
+
+| Technology | Purpose |
+|------------|----------|
+| GitHub | Source Code Management |
+| Jenkins | Continuous Integration |
+| Docker | Containerization |
+| Docker Registry | Image Storage |
+| Spinnaker | Continuous Deployment |
+| Kubernetes | Container Orchestration |
+| GitOps | Manifest Management |
+
+---
+
+# 📌 Future Enhancements
+
+- Helm deployment support
+- ArgoCD integration
+- Blue/Green deployments
+- Canary deployments
+- Manual approval stages
+- Slack notifications
+- SonarQube integration
+- Trivy image scanning
+- Prometheus monitoring
+- Grafana dashboards
+- Rollback automation
+
+---
+
+# 🤝 Contributing
+
+Contributions are welcome.
+
+1. Fork the repository.
+2. Create a feature branch.
+3. Commit your changes.
+4. Push your branch.
+5. Open a Pull Request.
+
+---
+
+
+---
+
+## ⭐ If you found this project useful, consider giving it a star!
