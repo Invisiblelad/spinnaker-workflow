@@ -62,7 +62,7 @@ kubectl rollout restart deployment clouddriver -n spinnaker
 
 Verify:
 ```bash
-curl -sk -b cookies.txt "https://spinnaker.kubecredops.com/api/v1/artifacts/credentials" | jq
+curl -sk -b cookies.txt "https://<url>/api/v1/artifacts/credentials" | jq
 ```
 Should list `no-auth-http-account` with type `http`.
 
@@ -84,7 +84,7 @@ with your actual GitHub org/repo/branch.
 ### 3. Configure the GitHub webhook
 
 Repo → Settings → Webhooks → Add webhook
-- Payload URL: `http://jenkins.kubecredops.com/github-webhook/`
+- Payload URL: `http://<url>/github-webhook/`
 - Content type: `application/json`
 - Event: Just the push event
 
@@ -118,7 +118,7 @@ In Deck: Applications → Create Application → name it `demoapp`.
 
 ```bash
 curl -sk -b cookies.txt -X POST \
-  https://spinnaker.kubecredops.com/api/v1/pipelines \
+  https://<url>/api/v1/pipelines \
   -H "Content-Type: application/json" \
   -d @spinnaker/pipeline.json
 ```
